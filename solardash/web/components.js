@@ -84,6 +84,27 @@ function setSocBar(fillEl, pct, color) {
   fillEl.style.background = color;
 }
 
+/* Battery detail: each pack with its own SOC, using the same segmented battery-bar graphic. */
+function renderBatteryDetail(container, d) {
+  if (!d || !d.available || !d.packs || !d.packs.length) {
+    container.innerHTML = '<div class="bd-empty">Battery (BMS) — waiting for first BLE read…</div>';
+    return;
+  }
+  const cards = d.packs.map((p) => {
+    const charging = (p.current || 0) >= 0;
+    const tone = charging ? "#34D399" : "#FBBF24";
+    const fill = p.soc <= 15 ? "#FBBF24" : tone;
+    const soc = Math.max(0, Math.min(100, p.soc));
+    const fault = p.has_fault ? ' · <span class="bd-fault">FAULT</span>' : "";
+    return `<div class="bd-pack">
+        <div class="bd-pack-head"><span class="bd-pack-name">${p.name}</span><span class="bd-pack-soc" style="color:${tone}">${p.soc}<small>%</small></span></div>
+        <div class="socbar"><div class="socbar-fill" style="width:${soc}%;background:${fill}"></div><div class="socbar-seg"></div></div>
+        <div class="bd-pack-stats">${p.voltage.toFixed(2)} V · <span style="color:${tone}">${p.current >= 0 ? "+" : ""}${p.current.toFixed(1)} A</span> · ${p.temp_min}–${p.temp_max}°C${fault}</div>
+      </div>`;
+  }).join("");
+  container.innerHTML = `<div class="bd-packs">${cards}</div>`;
+}
+
 /* Power-flow diagram — web port of FlowDiagram (ui/SolarFlow.kt): Solar → Inverter → Battery
    nodes joined by wires, each carrying an animated dot when power flows. The battery wire's
    dot reverses direction when discharging. */
@@ -138,6 +159,20 @@ function ebarPopup() {
 }
 function hideEbarPopup() {
   if (_ebarPopup) _ebarPopup.style.display = "none";
+}
+
+// Show the shared popup with arbitrary HTML at a viewport position (used by the power chart).
+function showPopupAt(html, clientX, clientY) {
+  const p = ebarPopup();
+  p.innerHTML = html;
+  p.style.display = "block";
+  const pr = p.getBoundingClientRect();
+  let left = clientX - pr.width / 2;
+  left = Math.max(8, Math.min(window.innerWidth - pr.width - 8, left));
+  let top = clientY - pr.height - 14;
+  if (top < 8) top = clientY + 16;
+  p.style.left = Math.round(left) + "px";
+  p.style.top = Math.round(top) + "px";
 }
 function kwhText(v) {
   v = v || 0;

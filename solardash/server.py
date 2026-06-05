@@ -16,6 +16,7 @@ from fastapi import FastAPI, Query
 from fastapi.staticfiles import StaticFiles
 
 from . import api
+from .bms_poller import BmsPoller
 from .client import InverterClient
 from .config import Config
 from .db import TimeSeriesStore
@@ -40,19 +41,32 @@ async def lifespan(app: FastAPI):
     stop = asyncio.Event()
     task = asyncio.create_task(poller.run(stop))
 
+    bms_poller = None
+    bms_task = None
+    bms_stop = asyncio.Event()
+    if cfg.bms_enabled and cfg.bms_addresses:
+        bms_poller = BmsPoller(cfg.bms_addresses, interval_s=cfg.bms_interval_s)
+        bms_task = asyncio.create_task(bms_poller.run(bms_stop))
+
     app.state.store = store
     app.state.catalog = catalog
     app.state.cfg = cfg
     app.state.poller = poller
+    app.state.bms_poller = bms_poller
     try:
         yield
     finally:
         stop.set()
         task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        if bms_task:
+            bms_stop.set()
+            bms_task.cancel()
+        for t in (task, bms_task):
+            if t:
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
         store.close()
 
 
@@ -71,11 +85,19 @@ async def revalidate_static(request, call_next):
 
 @app.get("/api/current")
 async def current():
+    # Prefer the BMS-derived bank capacity for the ETA; fall back to the configured value.
+    cap_kwh = app.state.cfg.battery_capacity_kwh
+    bp = app.state.bms_poller
+    if bp is not None and bp.bank is not None:
+        cap_kwh = bp.bank.capacity_kwh
     return api.current_payload(
-        app.state.store,
-        app.state.catalog,
-        battery_capacity_wh=app.state.cfg.battery_capacity_kwh * 1000,
+        app.state.store, app.state.catalog, battery_capacity_wh=cap_kwh * 1000
     )
+
+
+@app.get("/api/battery")
+async def battery():
+    return api.battery_payload(app.state.bms_poller)
 
 
 @app.get("/api/history")
@@ -108,6 +130,7 @@ async def energy_lifetime():
 async def health():
     cfg = app.state.cfg
     poller = app.state.poller
+    bp = app.state.bms_poller
     return {
         "ok": True,
         "samples": app.state.store.count(),
@@ -115,6 +138,12 @@ async def health():
         "poll_interval_s": cfg.poll_interval_s,
         "last_ts": poller.last_ts,
         "consecutive_failures": poller.consecutive_failures,
+        "bms": {
+            "enabled": cfg.bms_enabled,
+            "packs": bp.bank.packs if (bp and bp.bank) else 0,
+            "last_ts": bp.last_ts if bp else None,
+            "failures": bp.consecutive_failures if bp else None,
+        },
     }
 
 

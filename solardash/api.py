@@ -99,3 +99,55 @@ def energy_payload(
 def lifetime_payload(store: TimeSeriesStore) -> Dict[str, object]:
     """All-time input (PV) / output (load) energy totals (kWh) for the header strip."""
     return store.energy_lifetime()
+
+
+def battery_payload(poller) -> Dict[str, object]:
+    """Latest BMS snapshot: bank summary + per-pack detail (cells, temps, SOC)."""
+    if poller is None or getattr(poller, "bank", None) is None:
+        return {"available": False}
+    b = poller.bank
+    packs = []
+    for s in poller.packs:
+        if s is None:
+            continue
+        temps = s.info.temps_c
+        packs.append({
+            "name": s.name,
+            "address": s.address,
+            "voltage": s.info.voltage,
+            "current": s.info.current,
+            "power": round(s.info.power, 1),
+            "soc": s.info.soc,
+            "residual_ah": s.info.residual_ah,
+            "nominal_ah": s.info.nominal_ah,
+            "cycles": s.info.cycles,
+            "cells": s.cells,
+            "cell_min": s.cell_min,
+            "cell_max": s.cell_max,
+            "cell_delta": s.cell_delta,
+            "temps": temps,
+            "temp_min": min(temps) if temps else None,
+            "temp_max": max(temps) if temps else None,
+            "has_fault": s.info.has_fault,
+        })
+    return {
+        "available": True,
+        "ts": poller.last_ts,
+        "bank": {
+            "packs": b.packs,
+            "voltage": b.voltage,
+            "current": b.current,
+            "power": b.power,
+            "soc": b.soc,
+            "nominal_ah": b.nominal_ah,
+            "residual_ah": b.residual_ah,
+            "capacity_kwh": b.capacity_kwh,
+            "cell_min": b.cell_min,
+            "cell_max": b.cell_max,
+            "cell_delta": b.cell_delta,
+            "temp_min": b.temp_min,
+            "temp_max": b.temp_max,
+            "fault_packs": b.fault_packs,
+        },
+        "packs": packs,
+    }

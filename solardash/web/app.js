@@ -25,6 +25,7 @@ let chart = null;
 let activeWin = 86400;
 let activePeriod = "hour";
 let energyView = null; // { period, rows } of the currently displayed energy data, for CSV export
+let bmsBank = null;    // latest BMS bank summary (for real battery temp in the main panel)
 
 function setPill(el, text, tone) {
   el.textContent = text;
@@ -93,13 +94,14 @@ function updateTiles(d) {
     etaEl.innerHTML = `▼ ${hmJs(d.battery_eta_minutes)} to empty`;
     etaEl.style.color = C.discharge;
   }
+  const battTemp = bmsBank ? bmsBank.temp_max : d.battery_temp; // BMS temp is real; inverter reads 0
   $("batt_v").textContent = fmt(d.battery_voltage, 2);
   $("batt_a").textContent = (d.battery_current != null && d.battery_current >= 0 ? "+" : "") + fmt(d.battery_current, 1);
-  $("batt_t").textContent = fmt(d.battery_temp, 1);
+  $("batt_t").textContent = fmt(battTemp, 1);
 
   // Secondary tiles
   $("dc_temp").textContent = fmt(d.dc_temp, 1);
-  $("temp_sub").textContent = `AC ${fmt(d.ac_temp, 1)}° · batt ${fmt(d.battery_temp, 1)}°`;
+  $("temp_sub").textContent = `AC ${fmt(d.ac_temp, 1)}° · batt ${fmt(battTemp, 1)}°`;
   $("machine_state").textContent = d.machine_state ?? "—";
 
   const tile = $("fault_tile");
@@ -130,6 +132,14 @@ async function loadCurrent() {
     $("liveDot").className = "dot down";
     $("status").textContent = "server unreachable";
   }
+}
+
+async function loadBattery() {
+  try {
+    const d = await (await fetch("api/battery", { cache: "no-store" })).json();
+    bmsBank = d.available ? d.bank : null;
+    renderBatteryDetail($("batteryDetail"), d);
+  } catch (e) { /* leave previous render */ }
 }
 
 // ---- history chart --------------------------------------------------------
@@ -172,9 +182,34 @@ async function loadHistory(win) {
     payload.series.load_total || [],
     payload.series.battery_power || [],
   ];
+  hideEbarPopup();
   const width = $("chart").clientWidth || 800;
-  if (chart) { chart.setData(data); chart.setSize({ width, height: 300 }); }
-  else { chart = new uPlot(chartOpts(width), data, $("chart")); }
+  if (chart) {
+    chart.setData(data);
+    chart.setSize({ width, height: 300 });
+  } else {
+    chart = new uPlot(chartOpts(width), data, $("chart"));
+    chart.over.addEventListener("click", onChartClick);
+  }
+}
+
+// Click the Power history to pin a popup with the values at that moment.
+function onChartClick(e) {
+  if (!chart) return;
+  const idx = chart.cursor.idx;
+  if (idx == null) return;
+  e.stopPropagation();
+  const ts = chart.data[0][idx];
+  const w = (v) => (v == null ? "—" : Math.round(v).toLocaleString() + " W");
+  const batt = chart.data[3][idx];
+  const bw = batt == null ? "—" : (batt > 0 ? "+" : "") + Math.round(batt).toLocaleString() + " W";
+  const when = new Date(ts * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const html =
+    `<div class="pop-title">${when}</div>` +
+    `<div class="pop-row"><i style="background:${C.pv}"></i>Solar PV<b>${w(chart.data[1][idx])}</b></div>` +
+    `<div class="pop-row"><i style="background:${C.load}"></i>Load<b>${w(chart.data[2][idx])}</b></div>` +
+    `<div class="pop-row"><i style="background:${C.charge}"></i>Battery<b>${bw}</b></div>`;
+  showPopupAt(html, e.clientX, e.clientY);
 }
 
 // ---- lifetime + energy trends ---------------------------------------------
@@ -292,15 +327,18 @@ function initERanges() {
 
 // ---- settings menu --------------------------------------------------------
 
-const SETTING = { acin: "solar.showAcIn", energy: "solar.showEnergy" };
+const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy" };
 const getBool = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === "1"; };
 
 function applySettings() {
   const acin = getBool(SETTING.acin, true);
+  const battery = getBool(SETTING.battery, true);
   const energy = getBool(SETTING.energy, true);
   document.body.classList.toggle("hide-acin", !acin);
+  document.body.classList.toggle("hide-battery", !battery);
   document.body.classList.toggle("hide-energy", !energy);
   $("toggleAcIn").checked = acin;
+  $("toggleBattery").checked = battery;
   $("toggleEnergy").checked = energy;
 }
 
@@ -311,8 +349,10 @@ function initSettings() {
     $("settingsMenu").hidden = !$("settingsMenu").hidden;
   });
   document.addEventListener("click", (e) => { if (!e.target.closest(".settings")) $("settingsMenu").hidden = true; });
-  $("toggleAcIn").addEventListener("change", (e) => { localStorage.setItem(SETTING.acin, e.target.checked ? "1" : "0"); applySettings(); });
-  $("toggleEnergy").addEventListener("change", (e) => { localStorage.setItem(SETTING.energy, e.target.checked ? "1" : "0"); applySettings(); });
+  const bind = (key, el) => $(el).addEventListener("change", (e) => { localStorage.setItem(key, e.target.checked ? "1" : "0"); applySettings(); });
+  bind(SETTING.acin, "toggleAcIn");
+  bind(SETTING.battery, "toggleBattery");
+  bind(SETTING.energy, "toggleEnergy");
 }
 
 function initRanges() {
@@ -336,11 +376,13 @@ initERanges();
 initEbarPopup($("ebars"));
 $("exportBtn").addEventListener("click", exportEnergyCSV);
 initSettings();
+loadBattery();
 loadCurrent();
 loadHistory(activeWin);
 loadLifetime();
 loadEnergy(activePeriod);
 setInterval(loadCurrent, 5000);
+setInterval(loadBattery, 20000);
 setInterval(() => loadHistory(activeWin), 30000);
 setInterval(loadLifetime, 30000);
 setInterval(() => loadEnergy(activePeriod), 60000);
