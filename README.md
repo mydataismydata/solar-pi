@@ -75,3 +75,30 @@ systemctl --user restart solardash          # restart after editing solardash.en
    (printed on the Solarman dongle), and `SOLAR_POLL_INTERVAL` (e.g. 10).
 2. Disable the simulator: `systemctl --user disable --now solardash-sim`
 3. `systemctl --user restart solardash`
+
+## Android app integration (mDNS)
+
+The Private Solar Monitoring Android app can read battery + inverter data straight from this Pi
+over `GET /api/battery` and `GET /api/current`, instead of connecting to the batteries over
+Bluetooth itself. That matters because the JBD packs allow only one BLE connection at a time — when
+the Pi is polling them, the phone can't, and vice-versa. With this Pi on the network the app pulls
+from it automatically and leaves the BLE link to the Pi.
+
+Discovery uses mDNS: `server.py` advertises a `_solarpi._tcp` service (port from `SOLAR_HTTP_PORT`,
+default 8000) via the `zeroconf` package. It's best-effort — if `zeroconf` isn't installed the
+dashboard still serves; the app then falls back to a manually-entered host in its Discover tab.
+
+If you'd rather advertise via the Pi's own avahi-daemon (no Python dependency), drop this in
+`/etc/avahi/services/solarpi.service` and `sudo systemctl restart avahi-daemon`:
+
+```xml
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name replace-wildcards="yes">Solar Pi on %h</name>
+  <service>
+    <type>_solarpi._tcp</type>
+    <port>8000</port>
+  </service>
+</service-group>
+```

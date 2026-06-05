@@ -2,6 +2,10 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 
+# mDNS advertisement so the Android app auto-discovers the Pi (_solarpi._tcp). Optional:
+# server.py degrades gracefully if it's missing. On a real Pi, an avahi .service file works too.
+zeroconf>=0.131
+
 # Phase 2b — battery over BLE (added when we wire up the JBD BMS)
 # bleak>=0.21
 

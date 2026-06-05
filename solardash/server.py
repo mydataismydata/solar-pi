@@ -26,6 +26,39 @@ from .poller import Poller
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
 
+def _start_mdns(port: int):
+    """Advertise the dashboard as a `_solarpi._tcp` service so the Android app can auto-discover it.
+
+    Best-effort: returns (Zeroconf, ServiceInfo) on success, or (None, None) if zeroconf isn't
+    installed or registration fails — the dashboard still serves either way, just without mDNS.
+    """
+    try:
+        import socket
+
+        from zeroconf import ServiceInfo, Zeroconf
+
+        # Resolve the primary LAN IP without sending anything (UDP connect just sets the route).
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+
+        info = ServiceInfo(
+            "_solarpi._tcp.local.",
+            "Solar Pi._solarpi._tcp.local.",
+            addresses=[socket.inet_aton(ip)],
+            port=port,
+            properties={"path": "/api"},
+        )
+        zc = Zeroconf()
+        zc.register_service(info)
+        return zc, info
+    except Exception:
+        return None, None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = Config.from_env()
@@ -48,6 +81,11 @@ async def lifespan(app: FastAPI):
         bms_poller = BmsPoller(cfg.bms_addresses, interval_s=cfg.bms_interval_s)
         bms_task = asyncio.create_task(bms_poller.run(bms_stop))
 
+    # Advertise over mDNS so the Android app finds us. The serve port comes from uvicorn, not Config,
+    # so read it from SOLAR_HTTP_PORT (default 8000) — set it if you serve on a different port.
+    http_port = int(os.environ.get("SOLAR_HTTP_PORT", "8000"))
+    zc, zc_info = _start_mdns(http_port)
+
     app.state.store = store
     app.state.catalog = catalog
     app.state.cfg = cfg
@@ -56,6 +94,13 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if zc is not None:
+            try:
+                if zc_info is not None:
+                    zc.unregister_service(zc_info)
+                zc.close()
+            except Exception:
+                pass
         stop.set()
         task.cancel()
         if bms_task:
