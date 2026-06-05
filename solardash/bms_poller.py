@@ -23,12 +23,18 @@ class BmsPoller:
         self.bank: Optional[BankSummary] = None
         self.packs: List[Optional[PackSample]] = []
         self.consecutive_failures = 0
+        self._parallel: dict = {}  # last-known parallel position per MAC (broadcast is intermittent)
 
     async def poll_once(self) -> Optional[BankSummary]:
         samples = await read_bank([a for a, _ in self.addresses])
-        for sample, (_, name) in zip(samples, self.addresses):
+        for sample, (addr, name) in zip(samples, self.addresses):
             if sample is not None:
                 sample.name = name
+                # Carry the position forward: this read may not have caught a broadcast.
+                if sample.parallel:
+                    self._parallel[addr] = sample.parallel
+                elif addr in self._parallel:
+                    sample.parallel = self._parallel[addr]
         bank = summarize(samples)
         if bank is None:
             self.consecutive_failures += 1

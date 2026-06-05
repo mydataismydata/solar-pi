@@ -22,6 +22,7 @@ from .jbd import (
     parse_basic_info,
     parse_cell_voltages,
 )
+from .pack_broadcast import PackBroadcast
 
 CELL_NOMINAL_V = 3.2  # LiFePO4 nominal cell voltage, for capacity (kWh) derivation
 
@@ -32,6 +33,7 @@ class PackSample:
     name: Optional[str]
     info: PackInfo
     cells: List[float] = field(default_factory=list)
+    parallel: Optional[int] = None  # position in the parallel group (1=master) from the broadcast
 
     @property
     def cell_min(self) -> Optional[float]:
@@ -98,19 +100,34 @@ def summarize(packs: List[Optional[PackSample]]) -> Optional[BankSummary]:
 
 
 async def read_pack(address: str, name: Optional[str] = None, connect_timeout: float = 20.0,
-                    reply_timeout: float = 6.0) -> Optional[PackSample]:
-    """Connect to one pack, request basic info + cells, parse, disconnect. None on failure."""
+                    reply_timeout: float = 6.0, broadcast_timeout: float = 3.0) -> Optional[PackSample]:
+    """Connect to one pack, request basic info + cells, capture its position broadcast, disconnect.
+
+    Returns None on failure. The parallel position (1=master) rides an unsolicited broadcast, so
+    after the 0x03/0x04 replies arrive we wait a short grace period for one; if none shows in time,
+    parallel is left None (the poller carries forward the last-known position).
+    """
     from bleak import BleakClient  # lazy: needs BlueZ, only on the Pi
 
     asm = JbdAssembler()
+    bcast = PackBroadcast()
     got = {}
-    done = asyncio.Event()
+    parallel = None
+    done = asyncio.Event()      # basic + cells received
+    pos_seen = asyncio.Event()  # parallel position captured from a broadcast
 
     def cb(_handle, data):
-        for cmd, payload in asm.feed(bytes(data)):
+        nonlocal parallel
+        raw = bytes(data)
+        for cmd, payload in asm.feed(raw):
             got[cmd] = payload
-            if CMD_BASIC in got and CMD_CELLS in got:
-                done.set()
+        if CMD_BASIC in got and CMD_CELLS in got:
+            done.set()
+        if parallel is None:
+            pos = bcast.feed(raw)
+            if pos:
+                parallel = pos
+                pos_seen.set()
 
     try:
         async with BleakClient(address, timeout=connect_timeout) as client:
@@ -122,6 +139,11 @@ async def read_pack(address: str, name: Optional[str] = None, connect_timeout: f
                 await asyncio.wait_for(done.wait(), timeout=reply_timeout)
             except asyncio.TimeoutError:
                 pass
+            if not pos_seen.is_set():
+                try:
+                    await asyncio.wait_for(pos_seen.wait(), timeout=broadcast_timeout)
+                except asyncio.TimeoutError:
+                    pass
             try:
                 await client.stop_notify(NOTIFY_UUID)
             except Exception:
@@ -136,6 +158,7 @@ async def read_pack(address: str, name: Optional[str] = None, connect_timeout: f
         name=name,
         info=parse_basic_info(got[CMD_BASIC]),
         cells=parse_cell_voltages(got[CMD_CELLS]) if CMD_CELLS in got else [],
+        parallel=parallel,
     )
 
 

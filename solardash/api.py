@@ -114,6 +114,7 @@ def battery_payload(poller) -> Dict[str, object]:
         packs.append({
             "name": s.name,
             "address": s.address,
+            "parallel": s.parallel,
             "voltage": s.info.voltage,
             "current": s.info.current,
             "power": round(s.info.power, 1),
