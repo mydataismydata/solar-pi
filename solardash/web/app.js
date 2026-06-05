@@ -144,8 +144,13 @@ async function loadBattery() {
 
 // ---- history chart --------------------------------------------------------
 
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
 function chartOpts(width) {
-  const axis = { stroke: C.txt3, grid: { stroke: C.line, width: 1 }, ticks: { stroke: C.line } };
+  // Read neutrals from CSS so the canvas axes/grid follow the active light/dark theme.
+  const axisStroke = cssVar("--txt3") || C.txt3;
+  const gridStroke = cssVar("--line") || C.line;
+  const axis = { stroke: axisStroke, grid: { stroke: gridStroke, width: 1 }, ticks: { stroke: gridStroke } };
   return {
     width, height: 300, legend: { show: false },
     cursor: { y: false, points: { size: 6 } },
@@ -214,14 +219,30 @@ function onChartClick(e) {
 
 // ---- lifetime + energy trends ---------------------------------------------
 
+// Top strip: today's running totals (the day's bucket from the daily roll-up).
+async function loadToday() {
+  try {
+    const now = new Date();
+    const key = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+    const start = Math.floor(new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000);
+    const payload = await (await fetch(`api/energy?period=day&start=${start}`, { cache: "no-store" })).json();
+    const b = (payload.buckets || []).find((x) => x.bucket === key) || {};
+    $("today_in").textContent = fmt(b.pv_kwh, 1);
+    $("today_out").textContent = fmt(b.load_kwh, 1);
+    $("today_charge").textContent = fmt(b.charge_kwh, 1);
+    $("today_discharge").textContent = fmt(b.discharge_kwh, 1);
+  } catch (e) { /* leave dashes */ }
+}
+
+// All-time totals, shown compactly in the Power history header.
 async function loadLifetime() {
   try {
     const lt = await (await fetch("api/energy/lifetime", { cache: "no-store" })).json();
-    $("lt_in").textContent = fmt(lt.pv_kwh, 1);
-    $("lt_out").textContent = fmt(lt.load_kwh, 1);
-    $("lt_charge").textContent = fmt(lt.charge_kwh, 1);
-    $("lt_discharge").textContent = fmt(lt.discharge_kwh, 1);
-    $("lt_since").textContent = lt.since ? "since " + new Date(lt.since * 1000).toLocaleDateString() : "";
+    $("life_in").textContent = fmt(lt.pv_kwh, 1);
+    $("life_out").textContent = fmt(lt.load_kwh, 1);
+    $("life_charge").textContent = fmt(lt.charge_kwh, 1);
+    $("life_discharge").textContent = fmt(lt.discharge_kwh, 1);
+    if (lt.since) $("lifeInline").title = "Lifetime since " + new Date(lt.since * 1000).toLocaleDateString();
   } catch (e) { /* leave dashes */ }
 }
 
@@ -355,6 +376,28 @@ function initSettings() {
   bind(SETTING.energy, "toggleEnergy");
 }
 
+// ---- theme (light / dark, persisted) --------------------------------------
+
+const THEME_KEY = "solar.theme";
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "light" ? "#F3F5F8" : "#0E1116");
+}
+
+function initTheme() {
+  applyTheme(localStorage.getItem(THEME_KEY) || "dark");
+  $("themeBtn").addEventListener("click", () => {
+    const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+    localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+    // uPlot paints axes/grid onto a canvas, so rebuild it to pick up the new theme colors.
+    if (chart) { chart.destroy(); chart = null; }
+    loadHistory(activeWin);
+  });
+}
+
 function initRanges() {
   $("ranges").addEventListener("click", (e) => {
     const btn = e.target.closest("button");
@@ -370,6 +413,7 @@ window.addEventListener("resize", () => {
   if (chart) chart.setSize({ width: $("chart").clientWidth || 800, height: 300 });
 });
 
+initTheme();
 renderLegend();
 initRanges();
 initERanges();
@@ -379,10 +423,12 @@ initSettings();
 loadBattery();
 loadCurrent();
 loadHistory(activeWin);
+loadToday();
 loadLifetime();
 loadEnergy(activePeriod);
 setInterval(loadCurrent, 5000);
 setInterval(loadBattery, 20000);
 setInterval(() => loadHistory(activeWin), 30000);
-setInterval(loadLifetime, 30000);
+setInterval(loadToday, 60000);
+setInterval(loadLifetime, 60000);
 setInterval(() => loadEnergy(activePeriod), 60000);
