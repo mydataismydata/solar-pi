@@ -84,6 +84,17 @@ function setSocBar(fillEl, pct, color) {
   fillEl.style.background = color;
 }
 
+// JBD protection-status bits (offset 16 of the 0x03 reply). Bits 0-3 are the normal
+// end-of-charge / end-of-discharge voltage cutoffs (shown as info, not an alarm); the rest
+// are genuine faults (overcurrent, short, temperature, IC error, lock).
+const PROT_BITS = ["Cell OV", "Cell UV", "Pack OV", "Pack UV", "Chg OT", "Chg UT", "Dsg OT", "Dsg UT", "Chg OC", "Dsg OC", "Short", "IC error", "Locked"];
+const PROT_SOFT = 0x000F;
+function protReasons(mask) {
+  const out = [];
+  for (let i = 0; i < PROT_BITS.length; i++) if (mask & (1 << i)) out.push(PROT_BITS[i]);
+  return out;
+}
+
 /* Battery detail: each pack with its own SOC, using the same segmented battery-bar graphic. */
 function renderBatteryDetail(container, d) {
   if (!d || !d.available || !d.packs || !d.packs.length) {
@@ -96,7 +107,11 @@ function renderBatteryDetail(container, d) {
     const cls = charging ? "val-pos" : "val-neg"; // theme-aware readable text color
     const soc = Math.max(0, Math.min(100, p.soc));
     const par = p.parallel ? `<span class="bd-pack-par">#${p.parallel}</span> ` : "";
-    const fault = p.has_fault ? ' · <span class="bd-fault">FAULT</span>' : "";
+    const reasons = protReasons(p.protection || 0);
+    const hard = (p.protection || 0) & ~PROT_SOFT; // any bit outside the normal voltage cutoffs
+    const fault = reasons.length
+      ? ` · <span class="${hard ? "bd-fault" : "bd-prot"}">${reasons.join(", ")}</span>`
+      : "";
     return `<div class="bd-pack">
         <div class="bd-pack-head"><span class="bd-pack-name">${par}${p.name}</span><span class="bd-pack-soc ${cls}">${p.soc}<small>%</small></span></div>
         <div class="socbar"><div class="socbar-fill" style="width:${soc}%;background:${fill}"></div><div class="socbar-seg"></div></div>
