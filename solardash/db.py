@@ -1,0 +1,301 @@
+"""SQLite time-series store for inverter samples.
+
+One row per successful poll: an epoch timestamp plus every InverterStatus field
+(including the derived power/total fields, so charts need no recompute). Tuned for
+a Raspberry Pi Zero 2 W — WAL mode lets the FastAPI reader run while the poller
+writes, and range queries downsample server-side to keep payloads small.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+import time
+from typing import Dict, List, Optional
+
+from .inverter import InverterStatus
+
+# (column, sql_type) in insert order. Derived fields are materialised for fast charting.
+# fault_codes is stored as a JSON array of ints (TEXT).
+COLUMNS = [
+    ("battery_soc", "INTEGER"),
+    ("battery_voltage", "REAL"),
+    ("battery_current", "REAL"),
+    ("battery_power", "REAL"),
+    ("battery_temp", "REAL"),
+    ("pv1_voltage", "REAL"),
+    ("pv1_current", "REAL"),
+    ("pv2_voltage", "REAL"),
+    ("pv2_current", "REAL"),
+    ("pv_power", "REAL"),
+    ("grid_voltage", "REAL"),
+    ("grid_frequency", "REAL"),
+    ("output_voltage", "REAL"),
+    ("output_frequency", "REAL"),
+    ("load_power", "INTEGER"),
+    ("load_apparent", "INTEGER"),
+    ("load_current", "REAL"),
+    ("load_l2_power", "INTEGER"),
+    ("load_l2_apparent", "INTEGER"),
+    ("load_l2_current", "REAL"),
+    ("load_total", "INTEGER"),
+    ("load_apparent_total", "INTEGER"),
+    ("grid_l2_voltage", "REAL"),
+    ("output_l2_voltage", "REAL"),
+    ("dc_temp", "REAL"),
+    ("ac_temp", "REAL"),
+    ("machine_state", "INTEGER"),
+    ("fault_codes", "TEXT"),
+]
+COLUMN_NAMES = [c for c, _ in COLUMNS]
+# Numeric columns that make sense to chart / average when downsampling.
+NUMERIC_COLUMNS = [c for c, _ in COLUMNS if c != "fault_codes"]
+
+
+def status_to_row(status: InverterStatus) -> Dict[str, object]:
+    """Flatten an InverterStatus (incl. derived properties) into a column->value dict."""
+    return {
+        "battery_soc": status.battery_soc,
+        "battery_voltage": status.battery_voltage,
+        "battery_current": status.battery_current,
+        "battery_power": status.battery_power,
+        "battery_temp": status.battery_temp,
+        "pv1_voltage": status.pv1_voltage,
+        "pv1_current": status.pv1_current,
+        "pv2_voltage": status.pv2_voltage,
+        "pv2_current": status.pv2_current,
+        "pv_power": status.pv_power,
+        "grid_voltage": status.grid_voltage,
+        "grid_frequency": status.grid_frequency,
+        "output_voltage": status.output_voltage,
+        "output_frequency": status.output_frequency,
+        "load_power": status.load_power,
+        "load_apparent": status.load_apparent,
+        "load_current": status.load_current,
+        "load_l2_power": status.load_l2_power,
+        "load_l2_apparent": status.load_l2_apparent,
+        "load_l2_current": status.load_l2_current,
+        "load_total": status.load_total,
+        "load_apparent_total": status.load_apparent_total,
+        "grid_l2_voltage": status.grid_l2_voltage,
+        "output_l2_voltage": status.output_l2_voltage,
+        "dc_temp": status.dc_temp,
+        "ac_temp": status.ac_temp,
+        "machine_state": status.machine_state,
+        "fault_codes": json.dumps(status.fault_codes),
+    }
+
+
+class TimeSeriesStore:
+    def __init__(self, path: str = "data/solar.sqlite"):
+        self.path = path
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
+        # WAL = concurrent reader (server) + writer (poller); no-op on :memory:.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._create_schema()
+
+    def _create_schema(self) -> None:
+        cols_sql = ",\n  ".join(f"{name} {sqltype}" for name, sqltype in COLUMNS)
+        with self._lock:
+            self._conn.execute(
+                f"CREATE TABLE IF NOT EXISTS inverter_samples (\n"
+                f"  ts INTEGER NOT NULL,\n  {cols_sql}\n)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_samples_ts ON inverter_samples(ts)"
+            )
+            # Hourly energy accumulators (Wh). pv_wh = solar input, load_wh = AC output,
+            # charge/discharge_wh = battery. Roll-ups (day/month/lifetime) SUM these rows.
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS energy_hourly (\n"
+                "  hour INTEGER PRIMARY KEY,\n"
+                "  pv_wh REAL NOT NULL DEFAULT 0,\n"
+                "  load_wh REAL NOT NULL DEFAULT 0,\n"
+                "  charge_wh REAL NOT NULL DEFAULT 0,\n"
+                "  discharge_wh REAL NOT NULL DEFAULT 0\n)"
+            )
+            self._conn.commit()
+
+    def insert(self, status: InverterStatus, ts: Optional[int] = None) -> int:
+        if ts is None:
+            ts = int(time.time())
+        row = status_to_row(status)
+        cols = ["ts"] + COLUMN_NAMES
+        placeholders = ", ".join("?" for _ in cols)
+        values = [ts] + [row[name] for name in COLUMN_NAMES]
+        with self._lock:
+            self._conn.execute(
+                f"INSERT INTO inverter_samples ({', '.join(cols)}) VALUES ({placeholders})",
+                values,
+            )
+            self._conn.commit()
+        return ts
+
+    def _row_to_dict(self, row: Optional[sqlite3.Row]) -> Optional[Dict[str, object]]:
+        if row is None:
+            return None
+        d = dict(row)
+        if d.get("fault_codes"):
+            try:
+                d["fault_codes"] = json.loads(d["fault_codes"])
+            except (ValueError, TypeError):
+                d["fault_codes"] = []
+        else:
+            d["fault_codes"] = []
+        return d
+
+    def latest(self) -> Optional[Dict[str, object]]:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM inverter_samples ORDER BY ts DESC LIMIT 1"
+            )
+            return self._row_to_dict(cur.fetchone())
+
+    def count(self) -> int:
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM inverter_samples").fetchone()[0]
+
+    def series(
+        self,
+        fields: List[str],
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        max_points: Optional[int] = None,
+    ) -> List[Dict[str, object]]:
+        """Return [{ts, field: value, ...}] over [start, end], averaged into at most
+        max_points buckets (server-side downsampling for fast, small chart payloads)."""
+        safe = [f for f in fields if f in NUMERIC_COLUMNS]
+        if not safe:
+            return []
+        where, params = [], []
+        if start is not None:
+            where.append("ts >= ?")
+            params.append(start)
+        if end is not None:
+            where.append("ts <= ?")
+            params.append(end)
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+
+        with self._lock:
+            total = self._conn.execute(
+                f"SELECT COUNT(*) FROM inverter_samples{where_sql}", params
+            ).fetchone()[0]
+            if total == 0:
+                return []
+
+            if max_points and total > max_points:
+                bounds = self._conn.execute(
+                    f"SELECT MIN(ts), MAX(ts) FROM inverter_samples{where_sql}", params
+                ).fetchone()
+                span = max(1, (bounds[1] - bounds[0]))
+                bucket = max(1, span // max_points)
+                selects = ", ".join(f"AVG({f}) AS {f}" for f in safe)
+                sql = (
+                    f"SELECT (ts / ?) * ? AS ts, {selects} FROM inverter_samples"
+                    f"{where_sql} GROUP BY ts / ? ORDER BY ts"
+                )
+                rows = self._conn.execute(sql, [bucket, bucket] + params + [bucket]).fetchall()
+            else:
+                selects = ", ".join(safe)
+                sql = (
+                    f"SELECT ts, {selects} FROM inverter_samples{where_sql} ORDER BY ts"
+                )
+                rows = self._conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    # ---- energy (kWh) ----------------------------------------------------- #
+
+    _PERIOD_FMT = {"hour": "%Y-%m-%d %H:00", "day": "%Y-%m-%d", "month": "%Y-%m"}
+
+    def accrue(self, ts: int, dt_s: float, pv_w: float, load_w: float, batt_w: float) -> None:
+        """Add energy from a dt_s-long interval at average powers into the hour-of-ts bucket.
+        Negative PV/load are clamped to 0; battery splits into charge (+) / discharge (-)."""
+        if dt_s <= 0:
+            return
+        hour = ts - (ts % 3600)
+        f = dt_s / 3600.0
+        pv = max(0.0, pv_w) * f
+        load = max(0.0, load_w) * f
+        charge = max(0.0, batt_w) * f
+        discharge = max(0.0, -batt_w) * f
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO energy_hourly (hour, pv_wh, load_wh, charge_wh, discharge_wh) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(hour) DO UPDATE SET "
+                "  pv_wh = pv_wh + excluded.pv_wh, "
+                "  load_wh = load_wh + excluded.load_wh, "
+                "  charge_wh = charge_wh + excluded.charge_wh, "
+                "  discharge_wh = discharge_wh + excluded.discharge_wh",
+                (hour, pv, load, charge, discharge),
+            )
+            self._conn.commit()
+
+    def energy_buckets(
+        self, period: str, start: Optional[int] = None, end: Optional[int] = None, limit: Optional[int] = None
+    ) -> List[Dict[str, object]]:
+        """Roll hourly energy up into hour/day/month buckets (local time). Values in kWh."""
+        fmt = self._PERIOD_FMT.get(period)
+        if fmt is None:
+            return []
+        where, params = [], []
+        if start is not None:
+            where.append("hour >= ?")
+            params.append(start - (start % 3600))
+        if end is not None:
+            where.append("hour <= ?")
+            params.append(end)
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+        sql = (
+            f"SELECT strftime('{fmt}', hour, 'unixepoch', 'localtime') AS bucket, "
+            f"  MIN(hour) AS start_ts, "
+            f"  SUM(pv_wh) AS pv, SUM(load_wh) AS load, "
+            f"  SUM(charge_wh) AS charge, SUM(discharge_wh) AS discharge "
+            f"FROM energy_hourly{where_sql} GROUP BY bucket ORDER BY start_ts"
+        )
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        out = [
+            {
+                "bucket": r["bucket"],
+                "start_ts": r["start_ts"],
+                "pv_kwh": round((r["pv"] or 0) / 1000.0, 4),
+                "load_kwh": round((r["load"] or 0) / 1000.0, 4),
+                "charge_kwh": round((r["charge"] or 0) / 1000.0, 4),
+                "discharge_kwh": round((r["discharge"] or 0) / 1000.0, 4),
+            }
+            for r in rows
+        ]
+        return out[-limit:] if limit else out
+
+    def energy_lifetime(self) -> Dict[str, object]:
+        """All-time energy totals (kWh) plus the span covered."""
+        with self._lock:
+            r = self._conn.execute(
+                "SELECT SUM(pv_wh) pv, SUM(load_wh) load, SUM(charge_wh) charge, "
+                "SUM(discharge_wh) discharge, MIN(hour) since, MAX(hour) last FROM energy_hourly"
+            ).fetchone()
+        return {
+            "pv_kwh": round((r["pv"] or 0) / 1000.0, 3),
+            "load_kwh": round((r["load"] or 0) / 1000.0, 3),
+            "charge_kwh": round((r["charge"] or 0) / 1000.0, 3),
+            "discharge_kwh": round((r["discharge"] or 0) / 1000.0, 3),
+            "since": r["since"],
+            "last": r["last"],
+        }
+
+    def prune(self, older_than_ts: int) -> int:
+        """Delete samples older than the given epoch ts; returns rows removed."""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM inverter_samples WHERE ts < ?", (older_than_ts,)
+            )
+            self._conn.commit()
+            return cur.rowcount
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()

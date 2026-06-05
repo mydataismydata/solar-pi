@@ -1,0 +1,12 @@
+# Runtime (Phase 2a — inverter over TCP)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# Phase 2b — battery over BLE (added when we wire up the JBD BMS)
+# bleak>=0.21
+
+# Dev / test
+# pytest>=8.0
+#
+# Protocol core (solardash/codec.py, inverter.py) and the SQLite store are
+# stdlib-only, so the tests run on a bare Python with no installs.

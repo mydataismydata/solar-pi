@@ -1,0 +1,346 @@
+"use strict";
+
+// Palette (mirrors the Android app's ui/Color.kt dark theme).
+const C = {
+  pv: "#FBBF24", load: "#9C8CFB", charge: "#34D399", discharge: "#FBBF24",
+  accent: "#22D3EE", accent2: "#4F9CF9", acin1: "#2DD4BF", acin2: "#14B8A6",
+  txt3: "#626C7B", line: "#262C37",
+};
+
+const $ = (id) => document.getElementById(id);
+const fmt = (v, d = 0) =>
+  v === null || v === undefined || Number.isNaN(v)
+    ? "—"
+    : Number(v).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
+const clampPct = (w, max) => Math.max(0, Math.min(100, ((Number(w) || 0) / max) * 100));
+const hmJs = (mins) => { mins = Math.max(0, Math.round(mins)); const h = Math.floor(mins / 60), m = mins % 60; return h && m ? `${h}h ${m}m` : h ? `${h}h` : `${m}m`; };
+
+// Gauges (max 4000 W like the app; PV cyan->blue, Load purple).
+const pvGauge = new Gauge($("pvGauge"), { id: "pv", max: 4000, unit: "W", sub: "total input", c1: C.accent, c2: C.accent2 });
+const loadGauge = new Gauge($("loadGauge"), { id: "load", max: 4000, unit: "W", sub: "real power · L1+L2", c1: C.load, c2: C.load });
+const acinGauge = new Gauge($("acinGauge"), { id: "acin", max: 4000, unit: "W", sub: "grid / generator", c1: C.acin1, c2: C.acin2 });
+renderFlow($("flow"));
+
+let chart = null;
+let activeWin = 86400;
+let activePeriod = "hour";
+let energyView = null; // { period, rows } of the currently displayed energy data, for CSV export
+
+function setPill(el, text, tone) {
+  el.textContent = text;
+  el.className = "pill" + (tone ? " " + tone : "");
+}
+
+function leg(prefix, w, v, a, max) {
+  $(prefix + "_w").textContent = fmt(w, 0);
+  $(prefix + "_bar").style.width = clampPct(w, max) + "%";
+  $(prefix + "_sub").textContent = `${fmt(v, 1)} V · ${fmt(a, 1)} A`;
+}
+
+function updateTiles(d) {
+  if (!d || !d.available) {
+    $("status").textContent = "waiting for first sample…";
+    $("liveDot").className = "dot stale";
+    return;
+  }
+
+  // Solar PV wheel + strings
+  pvGauge.set(d.pv_power);
+  const pvOn = (d.pv_power ?? 0) > 10;
+  setPill($("pv_pill"), pvOn ? "Powering" : "Idle", pvOn ? "accent" : "");
+  leg("pv1", d.pv1_power, d.pv1_voltage, d.pv1_current, 2000);
+  leg("pv2", d.pv2_power, d.pv2_voltage, d.pv2_current, 2000);
+
+  // Load wheel + legs
+  loadGauge.set(d.load_total);
+  setPill($("load_pill"), `${fmt(d.output_frequency, 2)} Hz`, "");
+  leg("l1", d.load_power, d.output_voltage, d.load_current, 2000);
+  leg("l2", d.load_l2_power, d.output_l2_voltage, d.load_l2_current, 2000);
+
+  // AC Input (grid / generator). grid_power isn't a decoded register yet, so the wheel
+  // reads 0 until one is mapped; the L1/L2 voltage + frequency below are live.
+  acinGauge.set(d.grid_power);
+  const gridLive = (d.grid_voltage ?? 0) > 50;
+  setPill($("acin_pill"), gridLive ? "Live input" : "No input", gridLive ? "accent" : "");
+  $("acin1_v").textContent = fmt(d.grid_voltage, 1);
+  $("acin1_bar").style.width = clampPct(d.grid_voltage, 260) + "%";
+  $("acin1_sub").textContent = `${fmt(d.grid_frequency, 2)} Hz`;
+  $("acin2_v").textContent = fmt(d.grid_l2_voltage, 1);
+  $("acin2_bar").style.width = clampPct(d.grid_l2_voltage, 260) + "%";
+  $("acin2_sub").textContent = gridLive ? "input" : "off-grid";
+
+  // Power-flow diagram
+  updateFlow(d);
+
+  // Battery
+  const charging = (d.battery_current ?? 0) >= 0;
+  const tone = charging ? C.charge : C.discharge;
+  $("battery_soc").textContent = fmt(d.battery_soc, 0);
+  const w = d.battery_power;
+  const watts = $("batt_watts");
+  watts.textContent = (w != null && w > 0 ? "+" : "") + fmt(w, 0) + " W";
+  watts.style.color = tone;
+  setPill($("batt_pill"), charging ? "Charging" : "Discharging", charging ? "green" : "amber");
+  setSocBar($("socbar_fill"), d.battery_soc, (d.battery_soc ?? 100) <= 15 ? C.discharge : tone);
+  const etaEl = $("batt_eta");
+  if (d.battery_eta_minutes == null) {
+    etaEl.textContent = "holding · idle";
+    etaEl.style.color = C.txt3;
+  } else if (d.battery_eta_kind === "full") {
+    etaEl.innerHTML = `▲ ${hmJs(d.battery_eta_minutes)} to full`;
+    etaEl.style.color = C.charge;
+  } else {
+    etaEl.innerHTML = `▼ ${hmJs(d.battery_eta_minutes)} to empty`;
+    etaEl.style.color = C.discharge;
+  }
+  $("batt_v").textContent = fmt(d.battery_voltage, 2);
+  $("batt_a").textContent = (d.battery_current != null && d.battery_current >= 0 ? "+" : "") + fmt(d.battery_current, 1);
+  $("batt_t").textContent = fmt(d.battery_temp, 1);
+
+  // Secondary tiles
+  $("dc_temp").textContent = fmt(d.dc_temp, 1);
+  $("temp_sub").textContent = `AC ${fmt(d.ac_temp, 1)}° · batt ${fmt(d.battery_temp, 1)}°`;
+  $("machine_state").textContent = d.machine_state ?? "—";
+
+  const tile = $("fault_tile");
+  if (d.faults && d.faults.length) {
+    tile.classList.add("has-fault");
+    $("fault_value").textContent = `${d.faults.length} FAULT${d.faults.length > 1 ? "S" : ""}`;
+    $("fault_sub").textContent = d.faults.map((f) => `F${String(f.code).padStart(2, "0")} ${f.text}`).join(" · ");
+  } else {
+    tile.classList.remove("has-fault");
+    $("fault_value").textContent = "OK";
+    $("fault_value").className = "tile-value ok";
+    $("fault_sub").textContent = "No active faults";
+  }
+
+  // freshness
+  const age = Math.floor(Date.now() / 1000) - d.ts;
+  const dot = $("liveDot");
+  if (age <= 30) { dot.className = "dot live"; $("status").textContent = "live · just now"; }
+  else if (age <= 120) { dot.className = "dot live"; $("status").textContent = `live · ${age}s ago`; }
+  else { dot.className = "dot stale"; $("status").textContent = `stale · ${Math.floor(age / 60)}m ago`; }
+}
+
+async function loadCurrent() {
+  try {
+    const r = await fetch("api/current", { cache: "no-store" });
+    updateTiles(await r.json());
+  } catch (e) {
+    $("liveDot").className = "dot down";
+    $("status").textContent = "server unreachable";
+  }
+}
+
+// ---- history chart --------------------------------------------------------
+
+function chartOpts(width) {
+  const axis = { stroke: C.txt3, grid: { stroke: C.line, width: 1 }, ticks: { stroke: C.line } };
+  return {
+    width, height: 300, legend: { show: false },
+    cursor: { y: false, points: { size: 6 } },
+    scales: { x: { time: true } },
+    series: [
+      {},
+      { label: "Solar", stroke: C.pv, width: 2, fill: "rgba(251,191,36,0.10)", spanGaps: false },
+      { label: "Load", stroke: C.load, width: 2, spanGaps: false },
+      { label: "Battery", stroke: C.charge, width: 2, spanGaps: false },
+    ],
+    axes: [
+      { ...axis },
+      { ...axis, size: 52, values: (u, vals) => vals.map((v) => (Math.abs(v) >= 1000 ? v / 1000 + "k" : v)) },
+    ],
+  };
+}
+
+function renderLegend() {
+  const items = [["Solar PV", C.pv], ["Load", C.load], ["Battery", C.charge]];
+  $("legend").innerHTML = items
+    .map(([n, c]) => `<span class="item"><span class="swatch" style="background:${c}"></span>${n} (W)</span>`)
+    .join("");
+}
+
+async function loadHistory(win) {
+  const now = Math.floor(Date.now() / 1000);
+  const url = `api/history?fields=pv_power,load_total,battery_power&start=${now - win}&max_points=600`;
+  let payload;
+  try { payload = await (await fetch(url, { cache: "no-store" })).json(); } catch (e) { return; }
+
+  const data = [
+    payload.ts,
+    payload.series.pv_power || [],
+    payload.series.load_total || [],
+    payload.series.battery_power || [],
+  ];
+  const width = $("chart").clientWidth || 800;
+  if (chart) { chart.setData(data); chart.setSize({ width, height: 300 }); }
+  else { chart = new uPlot(chartOpts(width), data, $("chart")); }
+}
+
+// ---- lifetime + energy trends ---------------------------------------------
+
+async function loadLifetime() {
+  try {
+    const lt = await (await fetch("api/energy/lifetime", { cache: "no-store" })).json();
+    $("lt_in").textContent = fmt(lt.pv_kwh, 1);
+    $("lt_out").textContent = fmt(lt.load_kwh, 1);
+    $("lt_charge").textContent = fmt(lt.charge_kwh, 1);
+    $("lt_discharge").textContent = fmt(lt.discharge_kwh, 1);
+    $("lt_since").textContent = lt.since ? "since " + new Date(lt.since * 1000).toLocaleDateString() : "";
+  } catch (e) { /* leave dashes */ }
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const FULL_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const pad2 = (n) => String(n).padStart(2, "0");
+const hour12 = (h) => (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? " AM" : " PM"); // "9 AM", "12 PM"
+function hourRange(h) {
+  const lbl = (x) => ({ hr: x % 12 === 0 ? 12 : x % 12, ap: x < 12 ? "AM" : "PM" });
+  const a = lbl(h), b = lbl((h + 1) % 24);
+  return a.ap === b.ap ? `${a.hr}-${b.hr} ${a.ap}` : `${a.hr} ${a.ap}-${b.hr} ${b.ap}`; // "9-10 AM", "11 AM-12 PM"
+}
+
+// Build the full set of calendar slots for the view, each with the SQLite-localtime bucket key
+// it should match: Daily=24 hours of today, Monthly=days of this month, Yearly=12 months this year.
+function genSlots(period) {
+  const now = new Date();
+  const slots = [];
+  if (period === "hour") {
+    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    for (let h = 0; h < 24; h++) {
+      const d = new Date(base.getTime() + h * 3600000);
+      slots.push({ key: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:00`, label: hour12(d.getHours()), title: hourRange(d.getHours()), start_ts: Math.floor(d.getTime() / 1000) });
+    }
+  } else if (period === "day") {
+    const y = now.getFullYear(), m = now.getMonth();
+    const days = new Date(y, m + 1, 0).getDate();
+    for (let day = 1; day <= days; day++) {
+      const d = new Date(y, m, day);
+      slots.push({ key: `${y}-${pad2(m + 1)}-${pad2(day)}`, label: String(day), title: `${MONTHS[m]} ${day}`, start_ts: Math.floor(d.getTime() / 1000) });
+    }
+  } else {
+    const y = now.getFullYear();
+    for (let mo = 0; mo < 12; mo++) {
+      const d = new Date(y, mo, 1);
+      slots.push({ key: `${y}-${pad2(mo + 1)}`, label: MONTHS[mo], title: `${FULL_MONTHS[mo]} ${y}`, start_ts: Math.floor(d.getTime() / 1000) });
+    }
+  }
+  return slots;
+}
+
+async function loadEnergy(period) {
+  const slots = genSlots(period);
+  if (!slots.length) return;
+  let payload;
+  try { payload = await (await fetch(`api/energy?period=${period}&start=${slots[0].start_ts}`, { cache: "no-store" })).json(); }
+  catch (e) { return; }
+  const byKey = {};
+  for (const b of payload.buckets || []) byKey[b.bucket] = b;
+  let tin = 0, tout = 0;
+  const merged = slots.map((s) => {
+    const d = byKey[s.key];
+    const pv = d ? d.pv_kwh : 0, load = d ? d.load_kwh : 0;
+    tin += pv; tout += load;
+    return { key: s.key, label: s.label, title: s.title, pv, load, charge: d ? d.charge_kwh : 0, discharge: d ? d.discharge_kwh : 0 };
+  });
+  energyView = { period, rows: merged };
+  $("etotals").innerHTML =
+    `<span class="et in">Input <b>${fmt(tin, 1)}</b> kWh</span>` +
+    `<span class="et out">Output <b>${fmt(tout, 1)}</b> kWh</span>`;
+  renderEnergyBars($("ebars"), merged);
+}
+
+function csvCell(s) {
+  s = String(s);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function exportEnergyCSV() {
+  const rows = (energyView && energyView.rows) || [];
+  const header = ["bucket", "label", "solar_kwh", "load_kwh", "battery_charged_kwh", "battery_discharged_kwh"];
+  const lines = [header.join(",")];
+  for (const r of rows) {
+    lines.push([
+      csvCell(r.key), csvCell(r.title || r.label),
+      r.pv.toFixed(3), r.load.toFixed(3), (r.charge || 0).toFixed(3), (r.discharge || 0).toFixed(3),
+    ].join(","));
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `solar-energy-${energyView ? energyView.period : "data"}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function initERanges() {
+  $("elegend").innerHTML =
+    '<span class="item"><span class="swatch" style="background:#FBBF24"></span>Input · Solar (kWh)</span>' +
+    '<span class="item"><span class="swatch" style="background:#9C8CFB"></span>Output · Load (kWh)</span>';
+  $("eranges").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    document.querySelectorAll("#eranges button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    activePeriod = btn.dataset.period;
+    loadEnergy(activePeriod);
+  });
+}
+
+// ---- settings menu --------------------------------------------------------
+
+const SETTING = { acin: "solar.showAcIn", energy: "solar.showEnergy" };
+const getBool = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === "1"; };
+
+function applySettings() {
+  const acin = getBool(SETTING.acin, true);
+  const energy = getBool(SETTING.energy, true);
+  document.body.classList.toggle("hide-acin", !acin);
+  document.body.classList.toggle("hide-energy", !energy);
+  $("toggleAcIn").checked = acin;
+  $("toggleEnergy").checked = energy;
+}
+
+function initSettings() {
+  applySettings();
+  $("gearBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    $("settingsMenu").hidden = !$("settingsMenu").hidden;
+  });
+  document.addEventListener("click", (e) => { if (!e.target.closest(".settings")) $("settingsMenu").hidden = true; });
+  $("toggleAcIn").addEventListener("change", (e) => { localStorage.setItem(SETTING.acin, e.target.checked ? "1" : "0"); applySettings(); });
+  $("toggleEnergy").addEventListener("change", (e) => { localStorage.setItem(SETTING.energy, e.target.checked ? "1" : "0"); applySettings(); });
+}
+
+function initRanges() {
+  $("ranges").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    document.querySelectorAll("#ranges button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    activeWin = Number(btn.dataset.win);
+    loadHistory(activeWin);
+  });
+}
+
+window.addEventListener("resize", () => {
+  if (chart) chart.setSize({ width: $("chart").clientWidth || 800, height: 300 });
+});
+
+renderLegend();
+initRanges();
+initERanges();
+initEbarPopup($("ebars"));
+$("exportBtn").addEventListener("click", exportEnergyCSV);
+initSettings();
+loadCurrent();
+loadHistory(activeWin);
+loadLifetime();
+loadEnergy(activePeriod);
+setInterval(loadCurrent, 5000);
+setInterval(() => loadHistory(activeWin), 30000);
+setInterval(loadLifetime, 30000);
+setInterval(() => loadEnergy(activePeriod), 60000);

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0E1116" />
+  <title>Solar Tracking Dashboard</title>
+  <link rel="stylesheet" href="vendor/uPlot.min.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot" id="liveDot"></span>
+      <h1>Solar Tracking</h1>
+    </div>
+    <div class="top-right">
+      <div class="status" id="status">connecting…</div>
+      <div class="settings">
+        <button class="gear" id="gearBtn" aria-label="Settings" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <div class="settings-menu" id="settingsMenu" hidden>
+          <div class="settings-title">Display</div>
+          <label class="setting-row"><span>Show AC Input panel</span><input type="checkbox" id="toggleAcIn" /></label>
+          <label class="setting-row"><span>Show energy trends</span><input type="checkbox" id="toggleEnergy" /></label>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="lifetime" id="lifetime">
+      <div class="lt-head">Lifetime</div>
+      <div class="lt-grid">
+        <div class="lt-item in"><label>Input · Solar</label><div class="lt-val"><span id="lt_in">—</span><small>kWh</small></div></div>
+        <div class="lt-item out"><label>Output · Load</label><div class="lt-val"><span id="lt_out">—</span><small>kWh</small></div></div>
+        <div class="lt-item"><label>Battery charged</label><div class="lt-val"><span id="lt_charge">—</span><small>kWh</small></div></div>
+        <div class="lt-item"><label>Battery discharged</label><div class="lt-val"><span id="lt_discharge">—</span><small>kWh</small></div></div>
+      </div>
+      <div class="lt-since" id="lt_since"></div>
+    </section>
+
+    <section class="hero">
+      <!-- 1. Solar PV power wheel -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">Solar PV</span>
+          <span class="pill" id="pv_pill">—</span>
+        </div>
+        <div id="pvGauge"></div>
+        <div class="legs">
+          <div class="leg">
+            <span class="leg-top"><i class="swatch" style="background:#22D3EE"></i>PV1</span>
+            <span class="leg-val"><span id="pv1_w">—</span> W</span>
+            <div class="leg-bar"><div id="pv1_bar" style="background:#22D3EE"></div></div>
+            <span class="leg-sub" id="pv1_sub">— V · — A</span>
+          </div>
+          <div class="leg-div"></div>
+          <div class="leg">
+            <span class="leg-top"><i class="swatch" style="background:#4F9CF9"></i>PV2</span>
+            <span class="leg-val"><span id="pv2_w">—</span> W</span>
+            <div class="leg-bar"><div id="pv2_bar" style="background:#4F9CF9"></div></div>
+            <span class="leg-sub" id="pv2_sub">— V · — A</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. AC Output (load) power wheel -->
+      <div class="panel">
+        <div class="panel-head">
+          <span class="panel-title">AC Output · Load</span>
+          <span class="pill" id="load_pill">— Hz</span>
+        </div>
+        <div id="loadGauge"></div>
+        <div class="legs">
+          <div class="leg">
+            <span class="leg-top"><i class="swatch" style="background:#9C8CFB"></i>L1</span>
+            <span class="leg-val"><span id="l1_w">—</span> W</span>
+            <div class="leg-bar"><div id="l1_bar" style="background:#9C8CFB"></div></div>
+            <span class="leg-sub" id="l1_sub">— V · — A</span>
+          </div>
+          <div class="leg-div"></div>
+          <div class="leg">
+            <span class="leg-top"><i class="swatch" style="background:#9C8CFB"></i>L2</span>
+            <span class="leg-val"><span id="l2_w">—</span> W</span>
+            <div class="leg-bar"><div id="l2_bar" style="background:#9C8CFB"></div></div>
+            <span class="leg-sub" id="l2_sub">— V · — A</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. AC Input (grid / generator) power wheel -->
+      <div class="panel acin-panel">
+        <div class="panel-head">
+          <span class="panel-title">AC Input · Grid/Gen</span>
+          <span class="pill" id="acin_pill">—</span>
+        </div>
+        <div id="acinGauge"></div>
+        <div class="legs">
+          <div class="leg">
+            <span class="leg-top"><i class="swatch" style="background:#2DD4BF"></i>L1</span>
+            <span class="leg-val"><span id="acin1_v">—</span> V</span>
+            <div class="leg-bar"><div id="acin1_bar" style="background:#2DD4BF"></div></div>
+            <span class="leg-sub" id="acin1_sub">— Hz</span>
+          </div>
+          <div class="leg-div"></div>
+          <div class="leg">
+            <span class="leg-top"><i class="swatch" style="background:#14B8A6"></i>L2</span>
+            <span class="leg-val"><span id="acin2_v">—</span> V</span>
+            <div class="leg-bar"><div id="acin2_bar" style="background:#14B8A6"></div></div>
+            <span class="leg-sub" id="acin2_sub">input</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4. Power flow (top) + Battery bank (below) -->
+      <div class="col4">
+        <div class="panel flow-panel">
+          <div class="panel-head"><span class="panel-title">Power flow</span></div>
+          <div id="flow"></div>
+        </div>
+        <div class="panel battery-panel">
+          <div class="panel-head">
+            <span class="panel-title">Battery bank</span>
+            <span class="pill" id="batt_pill">—</span>
+          </div>
+          <div class="batt-top">
+            <div class="batt-soc"><span id="battery_soc">—</span><small>%</small></div>
+            <div class="batt-watts" id="batt_watts">— W</div>
+          </div>
+          <div class="socbar"><div class="socbar-fill" id="socbar_fill"></div><div class="socbar-seg"></div></div>
+          <div class="batt-eta" id="batt_eta"></div>
+          <div class="batt-foot">
+            <div><span><span id="batt_v">—</span><small> V</small></span><label>Voltage</label></div>
+            <div><span><span id="batt_a">—</span><small> A</small></span><label>Current</label></div>
+            <div><span><span id="batt_t">—</span><small> °C</small></span><label>Temp</label></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tiles">
+      <div class="tile" data-k="temp">
+        <div class="tile-label">Temperatures</div>
+        <div class="tile-value"><span id="dc_temp">—</span><small>°C DC</small></div>
+        <div class="tile-sub" id="temp_sub">AC — · batt —</div>
+      </div>
+      <div class="tile" data-k="state">
+        <div class="tile-label">Machine state</div>
+        <div class="tile-value"><span id="machine_state">—</span></div>
+        <div class="tile-sub" id="state_sub">inverter status</div>
+      </div>
+      <div class="tile alert" data-k="fault" id="fault_tile">
+        <div class="tile-label">Status</div>
+        <div class="tile-value ok" id="fault_value">OK</div>
+        <div class="tile-sub" id="fault_sub">No active faults</div>
+      </div>
+    </section>
+
+    <section class="card energy-card" id="energyCard">
+      <div class="chart-head">
+        <h2>Energy trends</h2>
+        <div class="head-right">
+          <div class="ranges" id="eranges">
+            <button data-period="hour" class="active">Daily</button>
+            <button data-period="day">Monthly</button>
+            <button data-period="month">Yearly</button>
+          </div>
+          <button class="export-btn" id="exportBtn" title="Download the current view as CSV">Export data</button>
+        </div>
+      </div>
+      <div class="etotals" id="etotals"></div>
+      <div class="ebars" id="ebars"></div>
+      <div class="legend" id="elegend"></div>
+    </section>
+
+    <section class="card chart-card">
+      <div class="chart-head">
+        <h2>Power history</h2>
+        <div class="ranges" id="ranges">
+          <button data-win="3600">1H</button>
+          <button data-win="21600">6H</button>
+          <button data-win="86400" class="active">24H</button>
+          <button data-win="604800">7D</button>
+          <button data-win="2592000">30D</button>
+        </div>
+      </div>
+      <div id="chart"></div>
+      <div class="legend" id="legend"></div>
+    </section>
+  </main>
+
+  <footer class="foot">Solar Tracking Dashboard · Raspberry Pi</footer>
+
+  <script src="vendor/uPlot.iife.min.js"></script>
+  <script src="components.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
