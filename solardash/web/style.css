@@ -13,6 +13,9 @@
   --accent2: #4F9CF9;
   --charge: #34D399;
   --discharge: #FBBF24;
+  /* Readable text variants of charge/discharge (the bright fills wash out as text on light). */
+  --charge-ink: #34D399;
+  --discharge-ink: #FBBF24;
   --fault: #F87171;
   --load: #9C8CFB;
   --pv: #FBBF24;
@@ -36,6 +39,8 @@
   --accent: #0E9BB8;
   --accent2: #2F7FE0;
   --track: rgba(15, 23, 32, 0.06);
+  --charge-ink: #047857;
+  --discharge-ink: #B45309;
 }
 :root[data-theme="light"] .topbar {
   background: linear-gradient(180deg, var(--bg), rgba(243, 245, 248, 0.86));
@@ -250,12 +255,18 @@ main { max-width: 1280px; margin: 0 auto; padding: 16px; }
 .bd-pack { background: var(--surface2); border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px; }
 .bd-pack-head { display: flex; justify-content: space-between; align-items: baseline; }
 .bd-pack-name { font-weight: 600; font-size: 13px; color: var(--txt); }
-.bd-pack-soc { font-family: var(--mono); font-weight: 680; font-size: 22px; color: var(--charge); font-variant-numeric: tabular-nums; }
+.bd-pack-soc { font-family: var(--mono); font-weight: 680; font-size: 22px; color: var(--charge-ink); font-variant-numeric: tabular-nums; }
 .bd-pack-soc small { font-size: 13px; color: var(--txt2); }
 .bd-pack .socbar { margin: 10px 0 8px; }
 .bd-pack-stats { font-size: 12px; color: var(--txt3); font-variant-numeric: tabular-nums; }
 .bd-fault { color: var(--fault); font-weight: 700; }
 .bd-empty { color: var(--txt3); font-size: 13px; padding: 24px 0; text-align: center; }
+
+/* Theme-aware charge/discharge text — declared late so it wins over panel defaults. */
+.val-pos { color: var(--charge-ink); }
+.val-neg { color: var(--discharge-ink); }
+.val-muted { color: var(--txt3); }
+.bd-pack-par { color: var(--txt3); font-weight: 600; }
 
 /* ---- settings-driven visibility ---- */
 body.hide-acin .acin-panel { display: none; }

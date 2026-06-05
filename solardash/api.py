@@ -121,6 +121,7 @@ def battery_payload(poller) -> Dict[str, object]:
             "residual_ah": s.info.residual_ah,
             "nominal_ah": s.info.nominal_ah,
             "cycles": s.info.cycles,
+            "protection": s.info.protection,
             "cells": s.cells,
             "cell_min": s.cell_min,
             "cell_max": s.cell_max,

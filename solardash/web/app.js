@@ -80,19 +80,19 @@ function updateTiles(d) {
   const w = d.battery_power;
   const watts = $("batt_watts");
   watts.textContent = (w != null && w > 0 ? "+" : "") + fmt(w, 0) + " W";
-  watts.style.color = tone;
+  watts.className = "batt-watts " + (charging ? "val-pos" : "val-neg");
   setPill($("batt_pill"), charging ? "Charging" : "Discharging", charging ? "green" : "amber");
   setSocBar($("socbar_fill"), d.battery_soc, (d.battery_soc ?? 100) <= 15 ? C.discharge : tone);
   const etaEl = $("batt_eta");
   if (d.battery_eta_minutes == null) {
     etaEl.textContent = "holding · idle";
-    etaEl.style.color = C.txt3;
+    etaEl.className = "batt-eta val-muted";
   } else if (d.battery_eta_kind === "full") {
     etaEl.innerHTML = `▲ ${hmJs(d.battery_eta_minutes)} to full`;
-    etaEl.style.color = C.charge;
+    etaEl.className = "batt-eta val-pos";
   } else {
     etaEl.innerHTML = `▼ ${hmJs(d.battery_eta_minutes)} to empty`;
-    etaEl.style.color = C.discharge;
+    etaEl.className = "batt-eta val-neg";
   }
   const battTemp = bmsBank ? bmsBank.temp_max : d.battery_temp; // BMS temp is real; inverter reads 0
   $("batt_v").textContent = fmt(d.battery_voltage, 2);
