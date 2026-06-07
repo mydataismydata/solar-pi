@@ -10,13 +10,10 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
-# The four ECO-LFP48100 packs (BLE MAC, short name). Override with SOLAR_BMS_ADDRESSES.
-DEFAULT_BMS_ADDRESSES: List[Tuple[str, str]] = [
-    ("AA:C2:37:06:56:72", "065672"),
-    ("AA:C2:37:06:57:4C", "06574C"),
-    ("AA:C2:37:08:25:3D", "08253D"),
-    ("AA:C2:37:08:25:44", "082544"),
-]
+# Battery packs (BLE MAC, optional =name). Empty by default — set your own packs via
+# SOLAR_BMS_ADDRESSES in solardash.env (comma-separated; name defaults to the MAC's last 6), e.g.
+#   SOLAR_BMS_ADDRESSES=AA:BB:CC:DD:EE:01,AA:BB:CC:DD:EE:02
+DEFAULT_BMS_ADDRESSES: List[Tuple[str, str]] = []
 
 # Each pack's fixed position in the parallel group (1 = master). This is STATIC (set by wiring),
 # but the BMS does not expose it to the Pi: the position rides an unsolicited broadcast that the
@@ -51,7 +48,8 @@ def _parse_bms_addresses(spec: str) -> List[Tuple[str, str]]:
             continue
         mac, _, name = item.partition("=")
         mac = mac.strip()
-        out.append((mac, name.strip() or mac[-6:].replace(":", "")))
+        # Default name = the MAC's last 6 hex digits (strip colons first, e.g. ...:56:72 -> 065672).
+        out.append((mac, name.strip() or mac.replace(":", "")[-6:]))
     return out
 
 
