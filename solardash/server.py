@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI):
     bms_task = None
     bms_stop = asyncio.Event()
     if cfg.bms_enabled and cfg.bms_addresses:
-        bms_poller = BmsPoller(cfg.bms_addresses, interval_s=cfg.bms_interval_s)
+        bms_poller = BmsPoller(cfg.bms_addresses, interval_s=cfg.bms_interval_s, positions=cfg.bms_positions)
         bms_task = asyncio.create_task(bms_poller.run(bms_stop))
 
     # Advertise over mDNS so the Android app finds us. The serve port comes from uvicorn, not Config,

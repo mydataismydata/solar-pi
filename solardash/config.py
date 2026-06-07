@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 # The four ECO-LFP48100 packs (BLE MAC, short name). Override with SOLAR_BMS_ADDRESSES.
 DEFAULT_BMS_ADDRESSES: List[Tuple[str, str]] = [
@@ -17,6 +17,32 @@ DEFAULT_BMS_ADDRESSES: List[Tuple[str, str]] = [
     ("AA:C2:37:08:25:3D", "08253D"),
     ("AA:C2:37:08:25:44", "082544"),
 ]
+
+# Each pack's fixed position in the parallel group (1 = master). This is STATIC (set by wiring),
+# but the BMS does not expose it to the Pi: the position rides an unsolicited broadcast that the
+# phone app receives but the Pi's BlueZ stack never does (verified — see pack_broadcast.py / memory).
+# So it's configured here. Read each pack's "#N" off the phone app. Override with SOLAR_BMS_POSITIONS
+# ("MAC=pos,MAC=pos"). Empty = no number shown.
+DEFAULT_BMS_POSITIONS: Dict[str, int] = {
+    # "AA:C2:37:06:56:72": 0,
+    # "AA:C2:37:06:57:4C": 0,
+    # "AA:C2:37:08:25:3D": 0,
+    # "AA:C2:37:08:25:44": 0,
+}
+
+
+def _parse_bms_positions(spec: str) -> Dict[str, int]:
+    """Parse 'MAC=pos,MAC=pos' into {MAC_UPPER: pos}. ('=' separator since MACs contain ':'.)"""
+    out: Dict[str, int] = {}
+    for item in spec.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        mac, _, pos = item.partition("=")
+        mac, pos = mac.strip().upper(), pos.strip()
+        if mac and pos.isdigit():
+            out[mac] = int(pos)
+    return out
 
 
 def _parse_bms_addresses(spec: str) -> List[Tuple[str, str]]:
@@ -47,6 +73,7 @@ class Config:
     bms_enabled: bool = True
     bms_interval_s: float = 60.0
     bms_addresses: List[Tuple[str, str]] = field(default_factory=lambda: list(DEFAULT_BMS_ADDRESSES))
+    bms_positions: Dict[str, int] = field(default_factory=lambda: dict(DEFAULT_BMS_POSITIONS))
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -64,5 +91,10 @@ class Config:
                 _parse_bms_addresses(os.environ["SOLAR_BMS_ADDRESSES"])
                 if os.environ.get("SOLAR_BMS_ADDRESSES")
                 else list(DEFAULT_BMS_ADDRESSES)
+            ),
+            bms_positions=(
+                _parse_bms_positions(os.environ["SOLAR_BMS_POSITIONS"])
+                if os.environ.get("SOLAR_BMS_POSITIONS")
+                else dict(DEFAULT_BMS_POSITIONS)
             ),
         )

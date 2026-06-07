@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .bms_client import BankSummary, PackSample, read_bank, summarize
 
@@ -15,26 +15,23 @@ DEFAULT_BMS_INTERVAL_S = 60.0
 
 class BmsPoller:
     def __init__(self, addresses: List[Tuple[str, str]], interval_s: float = DEFAULT_BMS_INTERVAL_S,
-                 clock=time.time):
+                 clock=time.time, positions: Optional[Dict[str, int]] = None):
         self.addresses = addresses          # [(mac, name), ...]
         self.interval_s = interval_s
         self.clock = clock
+        # Static MAC -> parallel position (1 = master). Configured (the BMS doesn't expose it to the Pi).
+        self.positions: Dict[str, int] = {k.upper(): v for k, v in (positions or {}).items()}
         self.last_ts: Optional[int] = None
         self.bank: Optional[BankSummary] = None
         self.packs: List[Optional[PackSample]] = []
         self.consecutive_failures = 0
-        self._parallel: dict = {}  # last-known parallel position per MAC (broadcast is intermittent)
 
     async def poll_once(self) -> Optional[BankSummary]:
         samples = await read_bank([a for a, _ in self.addresses])
         for sample, (addr, name) in zip(samples, self.addresses):
             if sample is not None:
                 sample.name = name
-                # Carry the position forward: this read may not have caught a broadcast.
-                if sample.parallel:
-                    self._parallel[addr] = sample.parallel
-                elif addr in self._parallel:
-                    sample.parallel = self._parallel[addr]
+                sample.parallel = self.positions.get(addr.upper())
         bank = summarize(samples)
         if bank is None:
             self.consecutive_failures += 1
