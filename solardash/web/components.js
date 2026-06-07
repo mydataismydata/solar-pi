@@ -95,13 +95,22 @@ function protReasons(mask) {
   return out;
 }
 
+// Temperatures: show both units, e.g. "25.2°C/77°F" (°F rounded whole).
+const cToF = (c) => Math.round((Number(c) * 9) / 5 + 32);
+function tempRangeCF(lo, hi) {
+  if (lo === null || lo === undefined || hi === null || hi === undefined) return "—";
+  if (Number(lo) === Number(hi)) return `${Number(lo).toFixed(1)}°C/${cToF(lo)}°F`;
+  return `${Number(lo).toFixed(1)}–${Number(hi).toFixed(1)}°C / ${cToF(lo)}–${cToF(hi)}°F`;
+}
+
 /* Battery detail: each pack with its own SOC, using the same segmented battery-bar graphic. */
 function renderBatteryDetail(container, d) {
   if (!d || !d.available || !d.packs || !d.packs.length) {
     container.innerHTML = '<div class="bd-empty">Battery (BMS) — waiting for first BLE read…</div>';
     return;
   }
-  const cards = d.packs.map((p) => {
+  // Order the packs by their position in the parallel group (#1 first); unknowns last.
+  const cards = [...d.packs].sort((a, b) => (a.parallel ?? 99) - (b.parallel ?? 99)).map((p) => {
     const charging = (p.current || 0) >= 0;
     const fill = p.soc <= 15 ? "#FBBF24" : charging ? "#34D399" : "#FBBF24"; // bar fill (bright reads fine)
     const cls = charging ? "val-pos" : "val-neg"; // theme-aware readable text color
@@ -115,7 +124,7 @@ function renderBatteryDetail(container, d) {
     return `<div class="bd-pack">
         <div class="bd-pack-head"><span class="bd-pack-name">${par}${p.name}</span><span class="bd-pack-soc ${cls}">${p.soc}<small>%</small></span></div>
         <div class="socbar"><div class="socbar-fill" style="width:${soc}%;background:${fill}"></div><div class="socbar-seg"></div></div>
-        <div class="bd-pack-stats">${p.voltage.toFixed(2)} V · <span class="${cls}">${p.current >= 0 ? "+" : ""}${p.current.toFixed(1)} A</span> · ${p.temp_min}–${p.temp_max}°C${fault}</div>
+        <div class="bd-pack-stats">${p.voltage.toFixed(2)} V · <span class="${cls}">${p.current >= 0 ? "+" : ""}${p.current.toFixed(1)} A</span> · ${tempRangeCF(p.temp_min, p.temp_max)}${fault}</div>
       </div>`;
   }).join("");
   container.innerHTML = `<div class="bd-packs">${cards}</div>`;
