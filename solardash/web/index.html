@@ -26,7 +26,6 @@
         </button>
         <div class="settings-menu" id="settingsMenu" hidden>
           <div class="settings-title">Display</div>
-          <label class="setting-row"><span>Wheels in amps (A) not watts (W)</span><input type="checkbox" id="toggleAmps" /></label>
           <label class="setting-row"><span>Show AC Input panel</span><input type="checkbox" id="toggleAcIn" /></label>
           <label class="setting-row"><span>Show battery detail</span><input type="checkbox" id="toggleBattery" /></label>
           <label class="setting-row"><span>Show energy trends</span><input type="checkbox" id="toggleEnergy" /></label>
@@ -51,7 +50,10 @@
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">Solar PV</span>
-          <span class="pill" id="pv_pill">—</span>
+          <div class="head-tools">
+            <div class="unit-toggle" data-gauge="pv"><button data-u="W">W</button><button data-u="A">A</button></div>
+            <span class="pill" id="pv_pill">—</span>
+          </div>
         </div>
         <div id="pvGauge"></div>
         <div class="legs">
@@ -75,7 +77,10 @@
       <div class="panel">
         <div class="panel-head">
           <span class="panel-title">AC Output · Load</span>
-          <span class="pill" id="load_pill">— Hz</span>
+          <div class="head-tools">
+            <div class="unit-toggle" data-gauge="load"><button data-u="W">W</button><button data-u="A">A</button></div>
+            <span class="pill" id="load_pill">— Hz</span>
+          </div>
         </div>
         <div id="loadGauge"></div>
         <div class="legs">
@@ -99,7 +104,10 @@
       <div class="panel acin-panel">
         <div class="panel-head">
           <span class="panel-title">AC Input · Grid/Gen</span>
-          <span class="pill" id="acin_pill">—</span>
+          <div class="head-tools">
+            <div class="unit-toggle" data-gauge="acin"><button data-u="W">W</button><button data-u="A">A</button></div>
+            <span class="pill" id="acin_pill">—</span>
+          </div>
         </div>
         <div id="acinGauge"></div>
         <div class="legs">
@@ -153,7 +161,7 @@
     <section class="tiles">
       <div class="tile" data-k="temp">
         <div class="tile-label">Temperatures</div>
-        <div class="tile-value"><span id="dc_temp">—</span><small>°C DC</small></div>
+        <div class="tile-value"><span id="dc_temp">—</span><small> DC</small></div>
         <div class="tile-sub" id="temp_sub">AC — · batt —</div>
       </div>
       <div class="tile" data-k="state">

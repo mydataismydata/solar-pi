@@ -108,6 +108,10 @@ function protReasons(mask) {
 
 // Temperatures: show both units, e.g. "25.2°C/77°F" (°F rounded whole).
 const cToF = (c) => Math.round((Number(c) * 9) / 5 + 32);
+function tempCF(c) {
+  if (c === null || c === undefined || c === "" || Number.isNaN(Number(c))) return "—";
+  return `${Number(c).toFixed(1)}°C/${cToF(c)}°F`;
+}
 function tempRangeCF(lo, hi) {
   if (lo === null || lo === undefined || hi === null || hi === undefined) return "—";
   if (Number(lo) === Number(hi)) return `${Number(lo).toFixed(1)}°C/${cToF(lo)}°F`;

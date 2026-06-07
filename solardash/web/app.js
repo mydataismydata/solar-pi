@@ -46,12 +46,10 @@ function updateTiles(d) {
     return;
   }
 
-  // Show the wheels in watts or amps (Solar PV / AC Output / AC Input only), per the gear setting.
-  const amps = getBool(SETTING.amps, false);
-  lastCurrent = d;
+  lastCurrent = d; // let the per-tile W/A toggles re-render instantly
 
-  // Solar PV wheel + strings
-  if (amps) { pvGauge.setUnit("A", 20, "total current", 1); pvGauge.set((d.pv1_current || 0) + (d.pv2_current || 0)); }
+  // Solar PV wheel + strings — unit per its own tile toggle (W or A)
+  if (gaugeUnit("pv") === "A") { pvGauge.setUnit("A", 20, "total current", 1); pvGauge.set((d.pv1_current || 0) + (d.pv2_current || 0)); }
   else { pvGauge.setUnit("W", 4000, "total input", 0); pvGauge.set(d.pv_power); }
   const pvOn = (d.pv_power ?? 0) > 10;
   setPill($("pv_pill"), pvOn ? "Powering" : "Idle", pvOn ? "accent" : "");
@@ -59,7 +57,7 @@ function updateTiles(d) {
   leg("pv2", d.pv2_power, d.pv2_voltage, d.pv2_current, 2000);
 
   // Load wheel + legs
-  if (amps) { loadGauge.setUnit("A", 40, "current · L1+L2", 1); loadGauge.set((d.load_current || 0) + (d.load_l2_current || 0)); }
+  if (gaugeUnit("load") === "A") { loadGauge.setUnit("A", 40, "current · L1+L2", 1); loadGauge.set((d.load_current || 0) + (d.load_l2_current || 0)); }
   else { loadGauge.setUnit("W", 4000, "real power · L1+L2", 0); loadGauge.set(d.load_total); }
   setPill($("load_pill"), `${fmt(d.output_frequency, 2)} Hz`, "");
   leg("l1", d.load_power, d.output_voltage, d.load_current, 2000);
@@ -67,7 +65,7 @@ function updateTiles(d) {
 
   // AC Input (grid / generator). grid_power/current aren't decoded registers yet, so the wheel
   // reads 0 until one is mapped; the L1/L2 voltage + frequency below are live.
-  if (amps) { acinGauge.setUnit("A", 40, "grid / generator", 1); acinGauge.set(d.grid_current); }
+  if (gaugeUnit("acin") === "A") { acinGauge.setUnit("A", 40, "grid / generator", 1); acinGauge.set(d.grid_current); }
   else { acinGauge.setUnit("W", 4000, "grid / generator", 0); acinGauge.set(d.grid_power); }
   const gridLive = (d.grid_voltage ?? 0) > 50;
   setPill($("acin_pill"), gridLive ? "Live input" : "No input", gridLive ? "accent" : "");
@@ -107,9 +105,9 @@ function updateTiles(d) {
   $("batt_a").textContent = (d.battery_current != null && d.battery_current >= 0 ? "+" : "") + fmt(d.battery_current, 1);
   $("batt_t").textContent = fmt(battTemp, 1);
 
-  // Secondary tiles
-  $("dc_temp").textContent = fmt(d.dc_temp, 1);
-  $("temp_sub").textContent = `AC ${fmt(d.ac_temp, 1)}° · batt ${fmt(battTemp, 1)}°`;
+  // Secondary tiles — temps in both °C and °F
+  $("dc_temp").textContent = tempCF(d.dc_temp);
+  $("temp_sub").textContent = `AC ${tempCF(d.ac_temp)} · batt ${tempCF(battTemp)}`;
   $("machine_state").textContent = d.machine_state ?? "—";
 
   const tile = $("fault_tile");
@@ -356,7 +354,7 @@ function initERanges() {
 
 // ---- settings menu --------------------------------------------------------
 
-const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy", amps: "solar.showAmps" };
+const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy" };
 const getBool = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === "1"; };
 
 function applySettings() {
@@ -369,8 +367,6 @@ function applySettings() {
   $("toggleAcIn").checked = acin;
   $("toggleBattery").checked = battery;
   $("toggleEnergy").checked = energy;
-  $("toggleAmps").checked = getBool(SETTING.amps, false);
-  if (lastCurrent) updateTiles(lastCurrent); // re-render the wheels in the chosen unit immediately
 }
 
 function initSettings() {
@@ -384,7 +380,25 @@ function initSettings() {
   bind(SETTING.acin, "toggleAcIn");
   bind(SETTING.battery, "toggleBattery");
   bind(SETTING.energy, "toggleEnergy");
-  bind(SETTING.amps, "toggleAmps");
+}
+
+// ---- per-tile W/A unit toggles (Solar PV / AC Output / AC Input) -----------
+
+const gaugeUnit = (key) => (localStorage.getItem("solar.unit." + key) === "A" ? "A" : "W");
+
+function initUnitToggles() {
+  document.querySelectorAll(".unit-toggle").forEach((tog) => {
+    const key = tog.dataset.gauge;
+    const sync = (u) => tog.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.u === u));
+    sync(gaugeUnit(key));
+    tog.addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      localStorage.setItem("solar.unit." + key, btn.dataset.u);
+      sync(btn.dataset.u);
+      if (lastCurrent) updateTiles(lastCurrent); // re-render just from the cached reading
+    });
+  });
 }
 
 // ---- theme (light / dark, persisted) --------------------------------------
@@ -431,6 +445,7 @@ initERanges();
 initEbarPopup($("ebars"));
 $("exportBtn").addEventListener("click", exportEnergyCSV);
 initSettings();
+initUnitToggles();
 loadBattery();
 loadCurrent();
 loadHistory(activeWin);
