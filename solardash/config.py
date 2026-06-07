@@ -24,10 +24,10 @@ DEFAULT_BMS_ADDRESSES: List[Tuple[str, str]] = [
 # So it's configured here. Read each pack's "#N" off the phone app. Override with SOLAR_BMS_POSITIONS
 # ("MAC=pos,MAC=pos"). Empty = no number shown.
 DEFAULT_BMS_POSITIONS: Dict[str, int] = {
-    # "AA:C2:37:06:56:72": 0,
-    # "AA:C2:37:06:57:4C": 0,
-    # "AA:C2:37:08:25:3D": 0,
-    # "AA:C2:37:08:25:44": 0,
+    "AA:C2:37:08:25:3D": 1,  # 08253D — master
+    "AA:C2:37:08:25:44": 2,  # 082544
+    "AA:C2:37:06:57:4C": 3,  # 06574C
+    "AA:C2:37:06:56:72": 4,  # 065672
 }
 
 
