@@ -26,6 +26,7 @@ let activeWin = 86400;
 let activePeriod = "hour";
 let energyView = null; // { period, rows } of the currently displayed energy data, for CSV export
 let bmsBank = null;    // latest BMS bank summary (for real battery temp in the main panel)
+let lastCurrent = null; // last /api/current payload, so the W/A toggle can re-render instantly
 
 function setPill(el, text, tone) {
   el.textContent = text;
@@ -45,22 +46,29 @@ function updateTiles(d) {
     return;
   }
 
+  // Show the wheels in watts or amps (Solar PV / AC Output / AC Input only), per the gear setting.
+  const amps = getBool(SETTING.amps, false);
+  lastCurrent = d;
+
   // Solar PV wheel + strings
-  pvGauge.set(d.pv_power);
+  if (amps) { pvGauge.setUnit("A", 20, "total current", 1); pvGauge.set((d.pv1_current || 0) + (d.pv2_current || 0)); }
+  else { pvGauge.setUnit("W", 4000, "total input", 0); pvGauge.set(d.pv_power); }
   const pvOn = (d.pv_power ?? 0) > 10;
   setPill($("pv_pill"), pvOn ? "Powering" : "Idle", pvOn ? "accent" : "");
   leg("pv1", d.pv1_power, d.pv1_voltage, d.pv1_current, 2000);
   leg("pv2", d.pv2_power, d.pv2_voltage, d.pv2_current, 2000);
 
   // Load wheel + legs
-  loadGauge.set(d.load_total);
+  if (amps) { loadGauge.setUnit("A", 40, "current · L1+L2", 1); loadGauge.set((d.load_current || 0) + (d.load_l2_current || 0)); }
+  else { loadGauge.setUnit("W", 4000, "real power · L1+L2", 0); loadGauge.set(d.load_total); }
   setPill($("load_pill"), `${fmt(d.output_frequency, 2)} Hz`, "");
   leg("l1", d.load_power, d.output_voltage, d.load_current, 2000);
   leg("l2", d.load_l2_power, d.output_l2_voltage, d.load_l2_current, 2000);
 
-  // AC Input (grid / generator). grid_power isn't a decoded register yet, so the wheel
+  // AC Input (grid / generator). grid_power/current aren't decoded registers yet, so the wheel
   // reads 0 until one is mapped; the L1/L2 voltage + frequency below are live.
-  acinGauge.set(d.grid_power);
+  if (amps) { acinGauge.setUnit("A", 40, "grid / generator", 1); acinGauge.set(d.grid_current); }
+  else { acinGauge.setUnit("W", 4000, "grid / generator", 0); acinGauge.set(d.grid_power); }
   const gridLive = (d.grid_voltage ?? 0) > 50;
   setPill($("acin_pill"), gridLive ? "Live input" : "No input", gridLive ? "accent" : "");
   $("acin1_v").textContent = fmt(d.grid_voltage, 1);
@@ -348,7 +356,7 @@ function initERanges() {
 
 // ---- settings menu --------------------------------------------------------
 
-const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy" };
+const SETTING = { acin: "solar.showAcIn", battery: "solar.showBattery", energy: "solar.showEnergy", amps: "solar.showAmps" };
 const getBool = (k, def) => { const v = localStorage.getItem(k); return v === null ? def : v === "1"; };
 
 function applySettings() {
@@ -361,6 +369,8 @@ function applySettings() {
   $("toggleAcIn").checked = acin;
   $("toggleBattery").checked = battery;
   $("toggleEnergy").checked = energy;
+  $("toggleAmps").checked = getBool(SETTING.amps, false);
+  if (lastCurrent) updateTiles(lastCurrent); // re-render the wheels in the chosen unit immediately
 }
 
 function initSettings() {
@@ -374,6 +384,7 @@ function initSettings() {
   bind(SETTING.acin, "toggleAcIn");
   bind(SETTING.battery, "toggleBattery");
   bind(SETTING.energy, "toggleEnergy");
+  bind(SETTING.amps, "toggleAmps");
 }
 
 // ---- theme (light / dark, persisted) --------------------------------------

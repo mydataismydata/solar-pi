@@ -64,6 +64,17 @@ class Gauge {
     this.fill = el.querySelector(".g-fill");
     this.tip = el.querySelector(".g-tiprot");
     this.num = el.querySelector(".g-num");
+    this.unitEl = el.querySelector(".g-val small");
+    this.subEl = el.querySelector(".g-sub");
+    this.decimals = 0;
+  }
+
+  // Switch the gauge's scale/label (e.g. W <-> A): max for the arc, unit text, sub caption, decimals.
+  setUnit(unit, max, sub, decimals = 0) {
+    this.max = max || 1;
+    this.decimals = decimals;
+    if (this.unitEl) this.unitEl.textContent = unit;
+    if (sub != null && this.subEl) this.subEl.textContent = sub;
   }
 
   set(value) {
@@ -72,7 +83,7 @@ class Gauge {
     this.fill.style.strokeDashoffset = String(1000 * (1 - pct));
     const ang = GA.START + GA.SWEEP * pct;
     this.tip.setAttribute("transform", `rotate(${ang.toFixed(2)} ${GA.CX} ${GA.CY})`);
-    this.num.textContent = Math.round(v).toLocaleString();
+    this.num.textContent = this.decimals ? v.toFixed(this.decimals) : Math.round(v).toLocaleString();
   }
 }
 
