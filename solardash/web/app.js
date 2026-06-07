@@ -33,10 +33,20 @@ function setPill(el, text, tone) {
   el.className = "pill" + (tone ? " " + tone : "");
 }
 
-function leg(prefix, w, v, a, max) {
-  $(prefix + "_w").textContent = fmt(w, 0);
-  $(prefix + "_bar").style.width = clampPct(w, max) + "%";
-  $(prefix + "_sub").textContent = `${fmt(v, 1)} V · ${fmt(a, 1)} A`;
+// A per-string/leg readout. In amps mode the bold value is the current (A) with W·V demoted to
+// the sub; otherwise it's the power (W) with V·A in the sub. Matches the wheel's own W/A toggle.
+function leg(prefix, w, v, a, wattMax, ampMax, amps) {
+  if (amps) {
+    $(prefix + "_w").textContent = fmt(a, 1);
+    $(prefix + "_u").textContent = "A";
+    $(prefix + "_bar").style.width = clampPct(a, ampMax) + "%";
+    $(prefix + "_sub").textContent = `${fmt(w, 0)} W · ${fmt(v, 1)} V`;
+  } else {
+    $(prefix + "_w").textContent = fmt(w, 0);
+    $(prefix + "_u").textContent = "W";
+    $(prefix + "_bar").style.width = clampPct(w, wattMax) + "%";
+    $(prefix + "_sub").textContent = `${fmt(v, 1)} V · ${fmt(a, 1)} A`;
+  }
 }
 
 function updateTiles(d) {
@@ -49,19 +59,21 @@ function updateTiles(d) {
   lastCurrent = d; // let the per-tile W/A toggles re-render instantly
 
   // Solar PV wheel + strings — unit per its own tile toggle (W or A)
-  if (gaugeUnit("pv") === "A") { pvGauge.setUnit("A", 20, "total current", 1); pvGauge.set((d.pv1_current || 0) + (d.pv2_current || 0)); }
+  const pvA = gaugeUnit("pv") === "A";
+  if (pvA) { pvGauge.setUnit("A", 20, "total current", 1); pvGauge.set((d.pv1_current || 0) + (d.pv2_current || 0)); }
   else { pvGauge.setUnit("W", 4000, "total input", 0); pvGauge.set(d.pv_power); }
   const pvOn = (d.pv_power ?? 0) > 10;
   setPill($("pv_pill"), pvOn ? "Powering" : "Idle", pvOn ? "accent" : "");
-  leg("pv1", d.pv1_power, d.pv1_voltage, d.pv1_current, 2000);
-  leg("pv2", d.pv2_power, d.pv2_voltage, d.pv2_current, 2000);
+  leg("pv1", d.pv1_power, d.pv1_voltage, d.pv1_current, 2000, 6, pvA);
+  leg("pv2", d.pv2_power, d.pv2_voltage, d.pv2_current, 2000, 6, pvA);
 
   // Load wheel + legs
-  if (gaugeUnit("load") === "A") { loadGauge.setUnit("A", 40, "current · L1+L2", 1); loadGauge.set((d.load_current || 0) + (d.load_l2_current || 0)); }
+  const loadA = gaugeUnit("load") === "A";
+  if (loadA) { loadGauge.setUnit("A", 40, "current · L1+L2", 1); loadGauge.set((d.load_current || 0) + (d.load_l2_current || 0)); }
   else { loadGauge.setUnit("W", 4000, "real power · L1+L2", 0); loadGauge.set(d.load_total); }
   setPill($("load_pill"), `${fmt(d.output_frequency, 2)} Hz`, "");
-  leg("l1", d.load_power, d.output_voltage, d.load_current, 2000);
-  leg("l2", d.load_l2_power, d.output_l2_voltage, d.load_l2_current, 2000);
+  leg("l1", d.load_power, d.output_voltage, d.load_current, 2000, 16, loadA);
+  leg("l2", d.load_l2_power, d.output_l2_voltage, d.load_l2_current, 2000, 16, loadA);
 
   // AC Input (grid / generator). grid_power/current aren't decoded registers yet, so the wheel
   // reads 0 until one is mapped; the L1/L2 voltage + frequency below are live.
