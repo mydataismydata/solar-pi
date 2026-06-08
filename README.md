@@ -5,9 +5,9 @@ battery BMS, running headless on a **Raspberry Pi Zero 2 W**. It polls live
 telemetry, stores a time-series history (which the companion Android app never
 kept), and serves current + historical charts over the local network.
 
-Phase 2 of the "Private Solar Monitoring" project — the protocol layer is a
-faithful Python port of that Android app, validated byte-for-byte against the
-same reference vectors.
+The protocol layer is a faithful Python port of the companion "Private Solar
+Monitoring" Android app, validated byte-for-byte against the same reference
+vectors.
 
 ## Screenshots
 
@@ -33,11 +33,11 @@ status, and an hourly/daily/monthly energy-trends chart with CSV export.
 
 | Source | Transport | Status |
 |--------|-----------|--------|
-| SRNE/Eco-Worthy inverter | TCP 8899 (Solarman V5 + Modbus-RTU) | **Phase 2a — live** |
-| JBD BMS (per-cell battery) | BLE (svc 0xFF00 / notify 0xFF01) | **Phase 2b — live** |
+| SRNE/Eco-Worthy inverter | TCP 8899 (Solarman V5 + Modbus-RTU) | **live** |
+| JBD BMS (per-cell battery) | BLE (svc 0xFF00 / notify 0xFF01) | **live** |
 
-The inverter also reports battery SOC / voltage / current / temp, so Phase 2a
-already covers the core picture; BLE adds per-cell granularity.
+The inverter also reports battery SOC / voltage / current / temp, so the inverter
+feed alone covers the core picture; BLE adds per-cell granularity.
 
 ## Layout
 
@@ -67,7 +67,7 @@ Pure-stdlib, no installs needed:
 python tests/test_codec.py
 ```
 
-## Build status (Phase 2a)
+## Features
 
 - [x] Protocol core ported + tested (codec, SRNE decode) — 15/15 green
 - [x] Async TCP client + offline simulator — end-to-end, 19/19 green
@@ -80,7 +80,7 @@ python tests/test_codec.py
 - [x] Settings menu — show/hide AC Input + energy trends (persisted)
 - [x] systemd user services (solardash + solardash-sim), linger=yes, auto-restart
 - [x] Deploy on-site — live on the real inverter (192.168.3.38)
-- Phase 2b — BLE battery:
+- BLE battery (per-cell):
   - [x] BMS discovery — 4 ECO-LFP48100 packs found (svc 0xFF00 / ff01 / ff02)
   - [x] JBD parser (0x03 basic info + 0x04 cells) — validated vs real frames
   - [x] BLE poller for all 4 packs + bank aggregation (auto-capacity, cell balance, temps)
@@ -158,7 +158,7 @@ git clone https://github.com/mydataismydata/solarpi.git ~/solardash
 cd ~/solardash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-# Phase 2b battery over BLE also needs bleak:
+# Battery over BLE also needs bleak:
 .venv/bin/pip install bleak
 ```
 
