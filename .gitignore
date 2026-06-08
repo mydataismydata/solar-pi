@@ -13,6 +13,9 @@ venv/
 data/
 *.log
 
+# Local screenshot/scratch drop folder (committed copies live in docs/img/)
+.files/
+
 # Editor / OS
 .vscode/
 .idea/
